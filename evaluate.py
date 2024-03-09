@@ -1,18 +1,16 @@
-DEFAULT_EPOCHS = 5
-
 import sqlite3
 import time 
+import ollama
+import re
 
 def create_connection(db_file):
     conn = sqlite3.connect(db_file)
 
     return conn
 
-def evaulate_dataset(dataset, models, prompt):
-    # create db
+def evaulate_model_with_temp_and_epoch_on_dataset(dataset, model, temperature, epoch):
     conn = create_connection(f'./Results/{dataset.name}_result.db')
 
-    # create table
     create_table = """
     CREATE TABLE IF NOT EXISTS results (
         id INTEGER PRIMARY KEY,
@@ -21,41 +19,48 @@ def evaulate_dataset(dataset, models, prompt):
         temp REAL NOT NULL,
         leftId INTEGER NOT NULL,
         rightId INTEGER NOT NULL,
-        result TEXT NOT NULL,
+        result REAL NOT NULL,
         duration REAL NOT NULL,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     """
 
     conn.execute(create_table)
+    
+    for leftId in range(len(dataset)):
+        for rightId in range(len(dataset)):
+            if leftId != rightId:
 
-    for model in models:
-        for epoch in range(1, DEFAULT_EPOCHS + 1):
-            for temp in range(1, 11):
-                for leftId in range(len(dataset)):
-                    for rightId in range(len(dataset)):
-                        if leftId != rightId:
+                start = time.time()
 
-                            start = time.time()
+                result = evaluate_record(dataset=dataset, model=f'{model}_t_{temperature}:latest', leftId=leftId, rightId=rightId)
 
-                            result = evaluate_record(dataset, model, temp/10, leftId, rightId)
+                end = time.time()
 
-                            end = time.time()
+                insert_record = f"""
+                INSERT INTO results (model, epoch, temp, leftId, rightId, result, duration)
+                VALUES ('{model}', {epoch}, {temperature}, {leftId}, {rightId}, {result}, {end - start});
+                """
 
-                            insert_record = f"""
-                            INSERT INTO results (model, epoch, temp, leftId, rightId, result, duration)
-                            VALUES ('{model}', {epoch}, {temp/10}, {leftId}, {rightId}, {result}, {end - start});
-                            """
+                print(insert_record)
 
-                            conn.execute(insert_record)
+                conn.execute(insert_record)
 
-    conn.commit()
+                conn.commit()
+    
     conn.close()
 
-def evaluate_record(dataset, model, temp, leftId, rightId):
-    message = convert_to_message(dataset, leftId) + convert_to_message(dataset, rightId)
+def evaluate_record(dataset, model, leftId, rightId):
+    message = "Entity 1:\n" + convert_to_message(dataset, leftId) + "Entity 2:\n" + convert_to_message(dataset, rightId)
 
-    return "0"
+    response = ollama.chat(model, messages=[
+        {
+            'role': 'user',
+            'content': message,
+        },
+    ])
+
+    return parse_response(response['message']['content'])
 
 def convert_to_message(dataframe, id):
     cols = dataframe.columns
@@ -67,4 +72,14 @@ def convert_to_message(dataframe, id):
     for col in cols:
         message += col + ": " + str(record[col]) + "\n"
 
+    print(message)
+
     return message
+
+def find_last_float(s):
+    matches = re.findall(r'[-+]?[0-9]+\.?[0-9]+', s)
+    return float(matches[-1]) if matches else -1
+
+def parse_response(response):
+    print("RESPONSE: ", response)
+    return find_last_float(response)
