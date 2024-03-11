@@ -9,6 +9,9 @@ def create_connection(db_file):
     return conn
 
 def evaulate_model_with_temp_and_epoch_on_dataset(dataset, model, temperature, epoch):
+    '''
+    THis is a sample
+    '''
     conn = create_connection(f'./Results/{dataset.name}_result.db')
 
     create_table = """
@@ -20,6 +23,7 @@ def evaulate_model_with_temp_and_epoch_on_dataset(dataset, model, temperature, e
         leftId INTEGER NOT NULL,
         rightId INTEGER NOT NULL,
         result REAL NOT NULL,
+        response BLOB NOT NULL,
         duration REAL NOT NULL,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -28,18 +32,18 @@ def evaulate_model_with_temp_and_epoch_on_dataset(dataset, model, temperature, e
     conn.execute(create_table)
     
     for leftId in range(len(dataset)):
-        for rightId in range(len(dataset)):
+        for rightId in range(leftId, len(dataset)):
             if leftId != rightId:
 
                 start = time.time()
 
-                result = evaluate_record(dataset=dataset, model=f'{model}_t_{temperature}:latest', leftId=leftId, rightId=rightId)
+                (result, response) = evaluate_record(dataset=dataset, model=f'{model}_Temp_{temperature}:latest', leftId=leftId, rightId=rightId)
 
                 end = time.time()
 
                 insert_record = f"""
-                INSERT INTO results (model, epoch, temp, leftId, rightId, result, duration)
-                VALUES ('{model}', {epoch}, {temperature}, {leftId}, {rightId}, {result}, {end - start});
+                INSERT INTO results (model, epoch, temp, leftId, rightId, result, response, duration)
+                VALUES ('{model}', {epoch}, {temperature}, {leftId}, {rightId}, {result}, "{remove_special_chars(response)}", {end - start});
                 """
 
                 print(insert_record)
@@ -51,7 +55,7 @@ def evaulate_model_with_temp_and_epoch_on_dataset(dataset, model, temperature, e
     conn.close()
 
 def evaluate_record(dataset, model, leftId, rightId):
-    message = "Entity 1:\n" + convert_to_message(dataset, leftId) + "Entity 2:\n" + convert_to_message(dataset, rightId)
+    message = convert_to_message(dataset, leftId) + convert_to_message(dataset, rightId)
 
     response = ollama.chat(model, messages=[
         {
@@ -60,7 +64,7 @@ def evaluate_record(dataset, model, leftId, rightId):
         },
     ])
 
-    return parse_response(response['message']['content'])
+    return (parse_response(response['message']['content']), response['message']['content'])
 
 def convert_to_message(dataframe, id):
     cols = dataframe.columns
@@ -72,14 +76,23 @@ def convert_to_message(dataframe, id):
     for col in cols:
         message += col + ": " + str(record[col]) + "\n"
 
-    print(message)
-
     return message
 
 def find_last_float(s):
-    matches = re.findall(r'[-+]?[0-9]+\.?[0-9]+', s)
+    matches = re.findall(r' 0\.[0-9]+', s)
     return float(matches[-1]) if matches else -1
 
 def parse_response(response):
-    print("RESPONSE: ", response)
     return find_last_float(response)
+
+def remove_special_chars(s):
+    allowed_chars = set(".,:- ")
+
+    s = s.replace("\n", " ")
+
+    # Filter out special characters
+    cleaned_string = "".join(c for c in s if  c.isalnum() or c in allowed_chars or c == " ")
+
+    return cleaned_string
+
+print(remove_special_chars("Hello\nHi 123 - 1 ][]"))
